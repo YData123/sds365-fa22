@@ -86,6 +86,23 @@ class PositionalEmbedding(tf.keras.layers.Layer):
     x = x + self.pos_encoding[tf.newaxis, :length, :]
     return x
 
+class Embedding(tf.keras.layers.Layer):
+  def __init__(self, vocab_size, d_model):
+    super().__init__()
+    self.d_model = d_model
+    self.embedding = tf.keras.layers.Embedding(vocab_size, d_model, mask_zero=True) 
+    self.pos_encoding = positional_encoding(length=2048, depth=d_model)
+
+  def compute_mask(self, *args, **kwargs):
+    return self.embedding.compute_mask(*args, **kwargs)
+
+  def call(self, x):
+    length = tf.shape(x)[1]
+    x = self.embedding(x)
+    # This factor sets the relative scale of the embedding and positonal_encoding.
+    x *= tf.math.sqrt(tf.cast(self.d_model, tf.float32))
+    return x
+
 class FeedForward(tf.keras.layers.Layer):
   def __init__(self, d_model, dff, dropout_rate=0.1):
     super().__init__()
@@ -155,6 +172,37 @@ class Encoder(tf.keras.layers.Layer):
     self.num_layers = num_layers
 
     self.pos_embedding = PositionalEmbedding(
+        vocab_size=vocab_size, d_model=d_model)
+
+    self.enc_layers = [
+        EncoderLayer(d_model=d_model,
+                     num_heads=num_heads,
+                     dff=dff,
+                     dropout_rate=dropout_rate)
+        for _ in range(num_layers)]
+    self.dropout = tf.keras.layers.Dropout(dropout_rate)
+
+  def call(self, x):
+    # `x` is token-IDs shape: (batch, seq_len)
+    x = self.pos_embedding(x)  # Shape `(batch_size, seq_len, d_model)`.
+
+    # Add dropout.
+    x = self.dropout(x)
+
+    for i in range(self.num_layers):
+      x = self.enc_layers[i](x)
+
+    return x  # Shape `(batch_size, seq_len, d_model)`
+
+class EncoderNoPos(tf.keras.layers.Layer):
+  def __init__(self, *, num_layers, d_model, num_heads,
+               dff, vocab_size, dropout_rate=0.1):
+    super().__init__()
+
+    self.d_model = d_model
+    self.num_layers = num_layers
+
+    self.pos_embedding = Embedding(
         vocab_size=vocab_size, d_model=d_model)
 
     self.enc_layers = [
